@@ -5,69 +5,42 @@ import java.net.URL
 import java.security.InvalidParameterException
 
 import com.typesafe.scalalogging.LazyLogging
-import geotrellis.raster.histogram.Histogram
+import geotrellis.raster.histogram.StreamingHistogram
 import geotrellis.vector.{Feature, Polygon}
 import geotrellis.vectortile
 
 import scala.collection.JavaConverters._
 
+/** Id for building reocrd, based on its position source file */
+case class Id(file: String, idx: Int)
 
-/** Part of building SimpleFeature we care about
-  * Note: case class provides safe equality testing
-  */
-case class Building(file: String, idx: Int)(
-  val footprint: Polygon,
-  val histogram: Option[Histogram[Double]] = None,
-  val errors: List[String] = List[String]()
+/** Container class to work with Building data */
+case class Building(
+  id: Id,
+  footprint: Polygon,
+  histograms: Map[String, Option[StreamingHistogram]] = Map.empty,
+  errors: List[String] = Nil
 ) {
-  def id: (String, Int) = (file, idx)
-
   def toVectorTileFeature: Feature[Polygon, Map[String, vectortile.Value]] = {
-    val attributes = Map("errors" -> vectortile.VString(errors.mkString(", ")))
-    val histAttributes = for {
-      hist <- histogram
-      (min, max) <- hist.minMaxValues()
-    } yield Map("elevation_min" -> vectortile.VDouble(min), "elevation_max" -> vectortile.VDouble(max))
-    Feature(footprint, attributes ++ histAttributes.getOrElse(Map.empty))
+    val histAttributes: Map[String, vectortile.Value] = {
+      histograms.flatMap({ case (name, h) =>
+        val minMax: Option[(Double, Double)] = h.flatMap(_.minMaxValues())
+        minMax match {
+          case Some((min, max)) =>
+            List(
+              s"${name}_min" -> vectortile.VDouble(min),
+              s"${name}_max" -> vectortile.VDouble(max))
+          case None => Nil
+        }
+      })
+    }
+    val errAttributes = Map("errors" -> vectortile.VString(errors.mkString(", ")))
+    Feature(footprint, errAttributes ++ histAttributes)
   }
 
   def withError(err: String): Building = {
-    copy()(footprint, histogram, errors ++ List(err))
+    copy(errors = err :: errors)
   }
-
-  def withHistogram(hist: Option[Histogram[Double]]): Building = {
-    if (!histogram.isEmpty && hist.isEmpty) {
-      print(s"WARNING: Overwriting with empty histogram for ($file, $idx)")
-    }
-    copy()(footprint, hist, errors)
-  }
-
-  def withFootprint(poly: Polygon): Building = {
-    copy()(poly, histogram, errors)
-  }
-
-  def mergeHistograms(other: Building): Building = {
-    require(other.idx == idx)
-    val hist = {
-      val mergedHist = for (h1 <- histogram; h2 <- other.histogram) yield h1 merge h2
-      mergedHist.orElse(histogram).orElse(other.histogram)
-    }
-    withHistogram(hist)
-  }
-}
-
-/** Container for per building result
-  * Needs to support combine method so we can reduce over partial results
-  * None min/max is possible of building does not intersect suitable DEM
-  */
-case class Elevation(min: Double, max: Double) {
-  private def withNaN(f: (Double, Double) => Double, x: Double, y: Double): Double = {
-    if (y.isNaN) x
-    else if (x.isNaN) x
-    else f(x, y)
-  }
-  def combine(other: Elevation) =
-    Elevation(withNaN(math.min, min, other.min), withNaN(math.max, max, other.max))
 }
 
 object Building extends LazyLogging {
@@ -112,7 +85,7 @@ object Building extends LazyLogging {
         val poly = json.parseGeoJson[Polygon]
         idx += 1
         if (poly.isValid)
-          Some(Building(url.getFile, idx)(poly))
+          Some(Building(Id(url.getFile, idx), poly))
         else {
           logger.warn(s"Dropping invalid geometry: ${poly.toWKT}")
           None
