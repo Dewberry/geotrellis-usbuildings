@@ -29,9 +29,9 @@ class BuildingSummaryApp(
     sc.parallelize(buildingsUri, buildingsUri.length)
       .flatMap { url =>
         Building.readFromGeoJson(new URL(url))
-      }
+      }.repartition(buildingsUri.length * 32)
 
-  val partitioner = new HashPartitioner(partitions=allBuildings.getNumPartitions * 16) //ravi commenting off partitions to let spark determine optimal
+  val partitioner = new HashPartitioner(partitions=allBuildings.getNumPartitions * 4) //ravi commenting off partitions to let spark determine optimal
 
   val summaries: Map[String, RDD[(Id, StreamingHistogram)]] = {
     val summaryFn: (Try[Raster[Tile]], Polygon) => Option[StreamingHistogram] =
