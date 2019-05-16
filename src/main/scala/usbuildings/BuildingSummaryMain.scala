@@ -42,10 +42,10 @@ object BuildingSummaryMain extends CommandApp(
     ).orNone
 
     val layersOpt = Opts.options[String](
-      long = "layers",
+      long = "layer",
       help = "GeoTrellis layers for summary: {attribute-name},{catalog-url},{layer-name},{zoom}"
     ).mapValidated { stringNel =>
-      val Rx = """(\w+),(.+),(\w+),(\d+)""".r
+      val Rx = """([-_\w]+),(.+),([-_\w]+),(\d+)""".r
       stringNel.map { string =>
         string match {
           case Rx(attribute, catalogUri, layerName, zoom) =>

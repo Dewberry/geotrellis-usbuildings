@@ -17,7 +17,7 @@ The rasters are sampled directly from that location.
 
 ## Output
 
-Output is a vector tile layer that includes the min and max elevation under each geometry. 
+Output is a vector tile layer that includes the min and max elevation under each geometry.
 
 ## Inventory
 
@@ -31,12 +31,12 @@ Output is a vector tile layer that includes the min and max elevation under each
 ### Local
 
 ```
-sbt:geotrellis-usbuildings> test:runMain usbuildings.Main --buildings https://usbuildingdata.blob.core.windows.net/usbuildings-v1-1/RhodeIsland.zip --output file:/tmp/usbuildings-ri-v01
+sbt:geotrellis-usbuildings> test:runMain usbuildings.BuildingSummaryMain --buildings https://usbuildingdata.blob.core.windows.net/usbuildings-v1-1/RhodeIsland.zip --output file:/tmp/usbuildings-ri-v01 --layer wsel_riverine,s3://dewberry-demo/geotl_prod,wsel_riverine_approx_full_nation,16 --layer depth,s3://dewberry-demo/geotl_prod,depth_riverine_10m_full_nation,14
 ```
 
 ### EMR
 
-At minimum, you'll need to change the following sbt lighter configuration variables in `build.sbt` 
+At minimum, you'll need to change the following sbt lighter configuration variables in `build.sbt`
 to resources within your AWS account before starting the EMR cluster:
 - `sparkS3JarFolder`: Must be an S3 path within the AWS account that the cluster can read/write to
 - `sparkS3LogUri`: Must be an S3 path within the AWS account that the cluster can read/write to
@@ -44,9 +44,9 @@ to resources within your AWS account before starting the EMR cluster:
 
 Be sure to `reload` in sbt after making changes to `build.sbt`.
 
-When running the commands below, be sure you replace the S3 url for the `--output` parameter 
+When running the commands below, be sure you replace the S3 url for the `--output` parameter
 to point to a valid S3 path that the EMR cluster has permissions to write to.
 
 ```
-sbt:geotrellis-usbuildings> sparkSubmit --all-buildings --buildings foo --output s3://bucket/path/prefix
+sbt:geotrellis-usbuildings> sparkSubmitMain usbuildings.BuildingSummaryMain --all-buildings --buildings foo --output s3://bucket/path/prefix --layer wsel_riverine,s3://dewberry-demo/geotl_prod,wsel_riverine_approx_full_nation,16 --layer depth,s3://dewberry-demo/geotl_prod,depth_riverine_10m_full_nation,14
 ```
