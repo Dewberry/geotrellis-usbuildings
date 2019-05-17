@@ -6,14 +6,37 @@ import com.amazonaws.services.s3.AmazonS3URI
 import com.amazonaws.services.s3.model.ObjectMetadata
 import geotrellis.contrib.vlm.RasterRegion
 import geotrellis.spark.io.s3.S3Client
+import geotrellis.raster.MultibandTile
 import geotrellis.vector.Extent
 import geotrellis.vectortile.{StrictLayer, VectorTile}
+import geotrellis.spark._
+import geotrellis.spark.io._
+import geotrellis.spark.io.index._
 import org.geotools.data.ogr.OGRDataStore
 import org.geotools.data.ogr.bridj.BridjOGRDataStoreFactory
 
 import scala.util.control.NonFatal
 
 object Util {
+
+  /** Write or udpate a layer, creates layer with bounds potentially larger than rdd
+   * @param id LayerId to be create
+   * @param rdd Tiles for initial or udpate write
+   */
+  def writeOrUpdateLayer(writer: LayerWriter[LayerId], id: LayerId, rdd: MultibandTileLayerRDD[SpatialKey]): Unit = {
+
+    if (writer.attributeStore.layerExists(id)) {
+      println(s"Updating: $id")
+      writer.update(id, rdd, { (existing: MultibandTile, updating: MultibandTile) => existing.merge(updating) })
+    } else {
+      val maxBounds = KeyBounds(
+          minKey = SpatialKey(0, 0),
+          maxKey = SpatialKey(rdd.metadata.layout.layoutCols - 1, rdd.metadata.layout.layoutRows - 1))
+      val keyIndex: KeyIndex[SpatialKey] = ZCurveKeyIndexMethod.createIndex(maxBounds)
+      println(s"Writing: $id")
+      writer.write(id, rdd, keyIndex)
+    }
+  }
 
   val getS3Client: () => S3Client = { () =>
     import com.amazonaws.services.s3.{AmazonS3ClientBuilder, AmazonS3URI}
