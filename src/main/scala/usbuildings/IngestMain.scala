@@ -151,24 +151,23 @@ object IngestMain extends CommandApp(
       val writer = LayerWriter(attributeStore, outputUri)
 
       /** Write or udpate a layer, creates layer with bounds potentially larger than rdd
-       * @param layerExtent Maximum extent for all likely updates to layer in LatLng
        * @param id LayerId to be create
        * @param rdd Tiles for initial or udpate write
        */
-      def writeOrUpdate(layerExtent: Extent, id: LayerId, rdd: MultibandTileLayerRDD[SpatialKey]): Unit = {
+      def writeOrUpdate(id: LayerId, rdd: MultibandTileLayerRDD[SpatialKey]): Unit = {
         if (attributeStore.layerExists(id)) {
           println(s"Updating: $id")
           writer.update(id, rdd)
         } else {
-          val maxExtent = layerExtent.reproject(LatLng, rdd.metadata.crs)
-          val maxBounds = KeyBounds(rdd.metadata.layout.mapTransform.extentToBounds(maxExtent))
+          val maxBounds = KeyBounds(
+              minKey = SpatialKey(0, 0),
+              maxKey = SpatialKey(rdd.metadata.layout.layoutCols - 1, rdd.metadata.layout.layoutRows - 1))
           val keyIndex: KeyIndex[SpatialKey] = ZCurveKeyIndexMethod.createIndex(maxBounds)
           println(s"Writing: $id")
           writer.write(id, rdd, keyIndex)
         }
       }
 
-      val conusExtent = Extent(-127, 19,-66, 52)
       // write base layer to disk to branch for two jobs, calculate histogram and write
       reprojected.persist(StorageLevel.MEMORY_AND_DISK_SER)
 
@@ -201,7 +200,8 @@ object IngestMain extends CommandApp(
       // Pyramiding up the zoom levels, write our tiles out to the local file system.
       Pyramid.upLevels(reprojected, layoutScheme, zoom, Bilinear) { (rdd, z) =>
         val layerId = LayerId(layerName, z)
-        writeOrUpdate(conusExtent, layerId, rdd)
+
+        writeOrUpdate(layerId, rdd)
       }
     }
   }
