@@ -10,18 +10,20 @@ import geotrellis.raster.histogram.StreamingHistogram
 import geotrellis.vector._
 import geotrellis.raster._
 import geotrellis.spark.SpatialKey
+import geotrellis.spark.io._
 import geotrellis.spark.tiling.ZoomedLayoutScheme
 import geotrellis.vectortile.VectorTile
 import org.apache.spark.rdd.RDD
 import org.apache.spark.{HashPartitioner, SparkContext}
 import org.apache.spark.rdd.CoGroupedRDD
 
-import scala.util.Try
+import scala.util.{Try, Success, Failure}
 
 class BuildingSummaryApp(
   val buildingsUri: Seq[String],
   val layers: Map[String, Layer],
-  val sampleFraction: Option[Double]
+  val zoom: Int,
+  val sampleFraction: Option[Double] = None
 )(@transient implicit val sc: SparkContext) extends LazyLogging with Serializable {
   import Implicits._
 
@@ -46,12 +48,17 @@ class BuildingSummaryApp(
   val summaries: Map[String, RDD[(Id, StreamingHistogram)]] = {
     val summaryFn: (Try[Raster[Tile]], Polygon) => Option[StreamingHistogram] =
       { (rasterTry, geom) =>
-        rasterTry.toOption.map { raster =>
-          raster.tile
-            .polygonalSummary(
-              extent = raster.extent,
-              geom,
-              handler = CustomDoubleHistogramSummary)
+        rasterTry match {
+          case Success(raster) =>
+            val ret = raster.tile.polygonalSummary(raster.extent, geom, CustomDoubleHistogramSummary)
+            ret.minMaxValues.map( _ => ret) // if we only got NODATA, drop the result early
+
+          case Failure(e: ValueNotFoundError) =>
+            None // tile wasn't there, sad but sometimes expected
+
+          case Failure(e: Throwable) =>
+            logger.error(e.getMessage)
+            None
         }
       }
 
@@ -83,7 +90,7 @@ class BuildingSummaryApp(
 
   // -- Reproject Building geometries to WebMercator and save them as Vector tiles
   val layoutScheme = ZoomedLayoutScheme(WebMercator)
-  val layout = layoutScheme.levelForZoom(15).layout
+  val layout = layoutScheme.levelForZoom(zoom).layout
 
   val buildingsPerWmTile: RDD[(SpatialKey, Iterable[Building])] =
   buildingsWithHistograms.flatMap { building =>
