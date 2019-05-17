@@ -123,7 +123,7 @@ sparkCoreEbsSize := Some(800)
 sparkMasterEbsSize := Some(200)
 
 //Cluster name
-sparkClusterName := s"geotrellis-usbuildings - echeipesh"
+sparkClusterName := s"geotrellis-usbuildings - ${sys.env.getOrElse("USER", "<anonymous user>")}"
 sparkEmrServiceRole := "EMR_DefaultRole"
 sparkInstanceRole := "EMR_EC2_DefaultRole"
 sparkJobFlowInstancesConfig := sparkJobFlowInstancesConfig.value.withEc2KeyName(
