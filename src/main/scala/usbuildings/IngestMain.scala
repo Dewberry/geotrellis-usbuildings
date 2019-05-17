@@ -121,12 +121,12 @@ object IngestMain extends CommandApp(
        */
       def writeOrUpdate(layerExtent: Extent, id: LayerId, rdd: MultibandTileLayerRDD[SpatialKey]): Unit = {
         if (attributeStore.layerExists(id)) {
+          writer.update(id, rdd)
+        } else {
           val maxExtent = layerExtent.reproject(LatLng, rdd.metadata.crs)
           val maxBounds = KeyBounds(rdd.metadata.layout.mapTransform.extentToBounds(maxExtent))
           val keyIndex: KeyIndex[SpatialKey] = ZCurveKeyIndexMethod.createIndex(maxBounds)
           writer.writer(id, rdd, keyIndex)
-        } else {
-          writer.update(id, rdd)
         }
       }
 
