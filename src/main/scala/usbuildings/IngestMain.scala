@@ -49,7 +49,9 @@ object IngestMain extends CommandApp(
 
     val layerNameOpt = Opts.option[String]("layer", help = "Layer name in above catalog")
 
-    ( inputOpt, outputOpt, layerNameOpt).mapN { (inputUri, outputUri, layerName) =>
+    val histogramOpt = Opts.flag("histogram", help = "Caluclate histogram on ingest").orFalse
+
+    ( inputOpt, outputOpt, layerNameOpt, histogramOpt).mapN { (inputUri, outputUri, layerName, histogram) =>
       val bucket = outputUri.getHost
       val path = outputUri.getPath.stripPrefix("/")
 
@@ -136,26 +138,28 @@ object IngestMain extends CommandApp(
 
       val topLayerId = LayerId(layerName, 0)
 
-      Try(attributeStore.read[Array[Histogram[Double]]](topLayerId, "histogram")) match {
-        case Success(savedHistograms) =>
-          val updateHistograms = reprojected.histogram()
-          val mergedHistograms: Array[Histogram[Double]] =
-            for { (sh, uh) <- savedHistograms.zip(updateHistograms) }
-            yield (new StreamingHistogram(sh.bucketCount)).merge(sh).merge(uh): Histogram[Double]
+      if (histogram) {
+        Try(attributeStore.read[Array[Histogram[Double]]](topLayerId, "histogram")) match {
+          case Success(savedHistograms) =>
+            val updateHistograms = reprojected.histogram()
+            val mergedHistograms: Array[Histogram[Double]] =
+              for { (sh, uh) <- savedHistograms.zip(updateHistograms) }
+              yield (new StreamingHistogram(sh.bucketCount)).merge(sh).merge(uh): Histogram[Double]
 
-          val oldMinMax = savedHistograms.map(_.minMaxValues())
-          val updMinMax = updateHistograms.map(_.minMaxValues())
-          val mrgMinMax = mergedHistograms.map(_.minMaxValues())
-          println(s"Updating histogram for $topLayerId, old: $oldMinMax upd: $updMinMax mrg: $mrgMinMax")
-          attributeStore.write(topLayerId, "histogram", mergedHistograms)
+            val oldMinMax = savedHistograms.map(_.minMaxValues())
+            val updMinMax = updateHistograms.map(_.minMaxValues())
+            val mrgMinMax = mergedHistograms.map(_.minMaxValues())
+            println(s"Updating histogram for $topLayerId, old: $oldMinMax upd: $updMinMax mrg: $mrgMinMax")
+            attributeStore.write(topLayerId, "histogram", mergedHistograms)
 
-        case Failure(e: AttributeNotFoundError) =>
-          val updateHistograms = reprojected.histogram()
-          println(s"Saving histogram for $topLayerId, new: ${updateHistograms.map(_.minMaxValues())}")
-          attributeStore.write(topLayerId, "histogram", updateHistograms)
+          case Failure(e: AttributeNotFoundError) =>
+            val updateHistograms = reprojected.histogram()
+            println(s"Saving histogram for $topLayerId, new: ${updateHistograms.map(_.minMaxValues())}")
+            attributeStore.write(topLayerId, "histogram", updateHistograms)
 
-        case Failure(e) =>
-          sys.error(s"Failed to read saved histogram: $e")
+          case Failure(e) =>
+            sys.error(s"Failed to read saved histogram: $e")
+        }
       }
 
       // Pyramiding up the zoom levels, write our tiles out to the local file system.
