@@ -6,35 +6,37 @@ import cats.implicits._
 import com.monovore.decline.{CommandApp, Opts}
 import geotrellis.proj4._
 import geotrellis.raster._
+import geotrellis.raster.io._
 import geotrellis.raster.histogram._
 import geotrellis.vector._
 import geotrellis.raster.resample.Bilinear
+import geotrellis.contrib.vlm._
+import geotrellis.contrib.vlm.geotiff._
+import geotrellis.contrib.vlm.gdal._
+import geotrellis.contrib.vlm.spark._
 import geotrellis.spark.io.index._
+import geotrellis.spark.tiling._
 import geotrellis.spark.io.kryo.KryoRegistrator
-import geotrellis.spark.io.s3.{S3AttributeStore, S3GeoTiffRDD, S3LayerManager, S3LayerWriter, S3Client, AmazonS3Client}
+import geotrellis.spark._
+import geotrellis.spark.io._
+import geotrellis.spark.io.s3._
+import geotrellis.spark.io.index._
 import geotrellis.spark.pyramid.Pyramid
 import geotrellis.spark.tiling.{FloatingLayoutScheme, ZoomedLayoutScheme}
 import geotrellis.spark.{LayerId, MultibandTileLayerRDD, SpatialKey, TileLayerMetadata}
-import geotrellis.vector.ProjectedExtent
-import org.apache.spark.rdd.RDD
+import org.apache.spark._
+import org.apache.spark.rdd._
 import org.apache.spark.serializer.KryoSerializer
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.storage.StorageLevel
 import com.amazonaws.retry.PredefinedRetryPolicies
 import com.amazonaws.auth._
 import com.amazonaws.services.s3.model.DeleteObjectsRequest.KeyVersion
 import com.amazonaws.retry.PredefinedRetryPolicies
 import com.amazonaws.services.s3.model._
-
-import geotrellis.raster._
-import geotrellis.raster.io._
-import geotrellis.spark.io._
-import geotrellis.spark.{Metadata, _}
 import spray.json.DefaultJsonProtocol._
-
 import scala.util.{Properties, Try, Success, Failure}
-import afu.org.checkerframework.checker.oigj.qual.O
-import org.apache.spark.storage.StorageLevel
+
 
 // This is an example showing the checker boxes problem with 10m NEDs.
 object IngestMain extends CommandApp(
@@ -52,8 +54,9 @@ object IngestMain extends CommandApp(
     val histogramOpt = Opts.flag("histogram", help = "Caluclate histogram on ingest").orFalse
 
     ( inputOpt, outputOpt, layerNameOpt, histogramOpt).mapN { (inputUri, outputUri, layerName, histogram) =>
-      val bucket = outputUri.getHost
-      val path = outputUri.getPath.stripPrefix("/")
+      println(s"Input: $inputUri")
+      println(s"Catalog: $outputUri")
+      println(s"Layer: $layerName")
 
       //to solve timeout problem
       System.setProperty("sun.net.client.defaultReadTimeout", "60000")
@@ -77,7 +80,27 @@ object IngestMain extends CommandApp(
       val stateName = myArr(myArr.length - 1)
 
       val layoutScheme = ZoomedLayoutScheme(WebMercator, tileSize = 256)
-      var zoom: Int = 6 //dummy low value
+
+      /** More optimal COG ingest that does not yet deal well with Striped GeoTiff segments */
+      // val paths: List[String] = {
+      //   val s3Client = Util.getS3Client
+      //   s3Client
+      //     .listKeys(bucketInp, pathInp)
+      //     .toList
+      //     .map { key => s"s3://$bucketInp/$key" }
+      // }
+      // paths.foreach(p => println(s"Read: $p"))
+      // val sourceRDD: RDD[RasterSource] =
+      //   sc.parallelize(paths, paths.length)
+      //     .map({ uri => GDALRasterSource(uri).reproject(WebMercator, Bilinear): RasterSource })
+      //     .cache()
+      // val summary = RasterSummary.fromRDD[RasterSource, Long](sourceRDD)
+      // val LayoutLevel(zoom, layout) = summary.levelFor(layoutScheme)
+      // println(s"Zoom: $zoom")
+      // val reprojected: MultibandTileLayerRDD[SpatialKey] =
+      //   RasterSourceRDD.tiledLayerRDD(sourceRDD, layout,
+      //     rasterSummary = summary.some,
+      //     partitioner = Some(new HashPartitioner(summary.estimatePartitionsNumber * 2)))
 
       val inputRDD: RDD[(ProjectedExtent, MultibandTile)] = {
         val getS3Client: () => S3Client = { () =>
@@ -95,26 +118,19 @@ object IngestMain extends CommandApp(
         S3GeoTiffRDD.spatialMultiband(bucketInp, pathInp, options)
       }
 
-      // TODO: replace this with RasterSource based ingest for better performance
-      val reprojected: RDD[(SpatialKey, MultibandTile)] with Metadata[TileLayerMetadata[SpatialKey]] = {
+      val (zoom, reprojected: RDD[(SpatialKey, MultibandTile)] with Metadata[TileLayerMetadata[SpatialKey]]) = {
         val (_, metadata) = TileLayerMetadata.fromRDD(inputRDD, FloatingLayoutScheme(512))
-        val inputTiledRDD =
-          inputRDD.tileToLayout(metadata.cellType, metadata.layout, Bilinear)
-            //.repartition(640) // this is preassigned in build.sbt as 1280 for a m5.2xlarge 20 node cluster.
+        val inputTiledRDD = inputRDD.tileToLayout(metadata.cellType, metadata.layout, Bilinear)
 
-        val (z, reprojected1) =
-          MultibandTileLayerRDD(inputTiledRDD, metadata)
-            .reproject(WebMercator, layoutScheme, Bilinear)
-
-        zoom = Math.max(zoom,z)
-        reprojected1
+        val (z, reprojected1) = MultibandTileLayerRDD(inputTiledRDD, metadata).reproject(WebMercator, layoutScheme, Bilinear)
+        (z, reprojected1)
       }
 
-      //using s3 for writing the outputs
-      val attributeStore = S3AttributeStore(bucket, path)
+      // using s3 for writing the outputs
+      val attributeStore = AttributeStore(outputUri)
 
       // Create the writer that we will use to store the tiles in the local catalog.
-      val writer = S3LayerWriter(attributeStore)
+      val writer = LayerWriter(attributeStore, outputUri)
 
       /** Write or udpate a layer, creates layer with bounds potentially larger than rdd
        * @param layerExtent Maximum extent for all likely updates to layer in LatLng
@@ -123,12 +139,14 @@ object IngestMain extends CommandApp(
        */
       def writeOrUpdate(layerExtent: Extent, id: LayerId, rdd: MultibandTileLayerRDD[SpatialKey]): Unit = {
         if (attributeStore.layerExists(id)) {
+          println(s"Updating: $id")
           writer.update(id, rdd)
         } else {
           val maxExtent = layerExtent.reproject(LatLng, rdd.metadata.crs)
           val maxBounds = KeyBounds(rdd.metadata.layout.mapTransform.extentToBounds(maxExtent))
           val keyIndex: KeyIndex[SpatialKey] = ZCurveKeyIndexMethod.createIndex(maxBounds)
-          writer.writer(id, rdd, keyIndex)
+          println(s"Writing: $id")
+          writer.write(id, rdd, keyIndex)
         }
       }
 

@@ -14,6 +14,15 @@ import org.geotools.data.ogr.bridj.BridjOGRDataStoreFactory
 import scala.util.control.NonFatal
 
 object Util {
+
+  def getS3Client = {
+    import com.amazonaws.services.s3.{AmazonS3ClientBuilder, AmazonS3URI}
+    import geotrellis.spark.io.s3.AmazonS3Client
+    val builder = AmazonS3ClientBuilder.standard()
+    val client = builder.build
+    new AmazonS3Client(client)
+  }
+
   def getOgrDataStore(uri: String, driver: Option[String] =  None): OGRDataStore = {
     println(s"Opening: $uri")
     val factory = new BridjOGRDataStoreFactory()

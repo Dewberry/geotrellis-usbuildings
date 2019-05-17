@@ -46,10 +46,11 @@ libraryDependencies ++= Seq(
   geotrellisShapefile,
   geotrellisGeotools,
   geotrellisVectorTile,
+  "com.azavea.geotrellis" %% "geotrellis-contrib-vlm"  % "3.14.0-SNAPSHOT",
+  "com.azavea.geotrellis" %% "geotrellis-contrib-gdal"  % "3.14.0-SNAPSHOT",
   "org.geotools" % "gt-ogr-bridj" % Version.geotools
     exclude ("com.nativelibs4java", "bridj"),
   "com.nativelibs4java" % "bridj" % "0.6.1",
-  "com.azavea.geotrellis" %% "geotrellis-contrib-vlm" % "0.7.11-2.2",
   "com.monovore" %% "decline" % "0.5.1"
 )
 
@@ -105,7 +106,7 @@ assemblyMergeStrategy in assembly := {
 // Settings from sbt-lighter plugin that will automate creating and submitting this job to EMR
 import sbtlighter._
 
-sparkEmrRelease := "emr-5.20.0"
+sparkEmrRelease := "emr-5.23.0"
 sparkAwsRegion := "us-east-1"
 sparkEmrApplications := Seq("Spark", "Zeppelin", "Ganglia")
 sparkEmrBootstrap := List(BootstrapAction("Install GDAL + dependencies",
