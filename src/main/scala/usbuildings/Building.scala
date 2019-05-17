@@ -6,7 +6,7 @@ import java.security.InvalidParameterException
 
 import com.typesafe.scalalogging.LazyLogging
 import geotrellis.raster.histogram.StreamingHistogram
-import geotrellis.vector.{Feature, Polygon}
+import geotrellis.vector._
 import geotrellis.vectortile
 
 import scala.collection.JavaConverters._

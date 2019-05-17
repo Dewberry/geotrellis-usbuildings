@@ -31,7 +31,7 @@ object Pluvial_2yr {
 
   //Observe that the spatial key is not used when returning Geotrellis Raster Source.
   def getRasterSource(tileKey: SpatialKey): RasterSource = {
-    GeotrellisRasterSource(catalogPath,lyrId)
+    new GeotrellisRasterSource(catalogPath,lyrId)
   }
 
 }

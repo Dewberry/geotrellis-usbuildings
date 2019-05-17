@@ -41,6 +41,8 @@ object BuildingSummaryMain extends CommandApp(
       help = "URI of the building shapes layers, if not given, read all buildings from Bing repo"
     ).orNone
 
+    val sampleOpt = Opts.option[Double](long = "sample", help = "Sample fraction on input building records").orNone
+
     val layersOpt = Opts.options[String](
       long = "layer",
       help = "GeoTrellis layers for summary: {attribute-name},{catalog-url},{layer-name},{zoom}"
@@ -60,7 +62,7 @@ object BuildingSummaryMain extends CommandApp(
       help = "S3 URI prefix of output tiles"
     ).withDefault("s3://geotrellis-test/usbuildings/default")
 
-    (buildingsOpt, outputOpt, layersOpt).mapN { (buildingsUri, outputUriString, layers) =>
+    (buildingsOpt, outputOpt, layersOpt, sampleOpt).mapN { (buildingsUri, outputUriString, layers, sample) =>
       val outputUri = new URI(outputUriString)
       if (outputUri.getScheme != "s3") {
         throw new java.lang.IllegalArgumentException("--output must be an S3 URI")
@@ -86,7 +88,7 @@ object BuildingSummaryMain extends CommandApp(
       implicit val sc: SparkContext = ss.sparkContext
 
       val uris: List[String] = buildingsUri.map(_.toList).getOrElse(Building.geoJsonURLs)
-      val buildings = new BuildingSummaryApp(uris, layersMap)
+      val buildings = new BuildingSummaryApp(uris, layersMap, sample)
 
       GenerateVT.save(buildings.tiles, zoom= 15, bucket, path)
     }

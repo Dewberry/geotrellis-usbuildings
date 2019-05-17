@@ -20,16 +20,26 @@ import scala.util.Try
 
 class BuildingSummaryApp(
   val buildingsUri: Seq[String],
-  val layers: Map[String, Layer] = ???
+  val layers: Map[String, Layer],
+  val sampleFraction: Option[Double]
 )(@transient implicit val sc: SparkContext) extends LazyLogging with Serializable {
   import Implicits._
 
   /** Explode each layer so we can parallelize reading over layers */
-  val allBuildings: RDD[Building] =
-    sc.parallelize(buildingsUri, buildingsUri.length)
+  val allBuildings: RDD[Building] = sampleFraction match {
+    case Some(sf) =>
+      sc.parallelize(buildingsUri, buildingsUri.length)
       .flatMap { url =>
         Building.readFromGeoJson(new URL(url))
-      }.repartition(buildingsUri.length * 32)
+      }.sample(withReplacement = false, sf)
+
+    case None =>
+      sc.parallelize(buildingsUri, buildingsUri.length)
+        .flatMap { url =>
+          Building.readFromGeoJson(new URL(url))
+        }.repartition(buildingsUri.length * 32)
+
+  }
 
   val partitioner = new HashPartitioner(partitions=allBuildings.getNumPartitions * 4) //ravi commenting off partitions to let spark determine optimal
 

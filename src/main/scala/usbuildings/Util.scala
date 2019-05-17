@@ -14,6 +14,27 @@ import org.geotools.data.ogr.bridj.BridjOGRDataStoreFactory
 import scala.util.control.NonFatal
 
 object Util {
+
+  val getS3Client: () => S3Client = { () =>
+    import com.amazonaws.services.s3.{AmazonS3ClientBuilder, AmazonS3URI}
+    import com.amazonaws.retry.PredefinedRetryPolicies
+    import com.amazonaws.auth._
+    import com.amazonaws.services.s3.model.DeleteObjectsRequest.KeyVersion
+    import com.amazonaws.retry.PredefinedRetryPolicies
+    import com.amazonaws.services.s3.model._
+
+    import geotrellis.spark.io.s3.AmazonS3Client
+    val config = {
+      val config = new com.amazonaws.ClientConfiguration
+      config.setMaxConnections(64)
+      config.setMaxErrorRetry(16)
+      config.setRetryPolicy(PredefinedRetryPolicies.getDefaultRetryPolicyWithCustomMaxRetries(32))
+      // Use AWS SDK default time-out settings before changing
+      config
+    }
+    AmazonS3Client(DefaultAWSCredentialsProviderChain.getInstance(), config)
+  }
+
   def getOgrDataStore(uri: String, driver: Option[String] =  None): OGRDataStore = {
     println(s"Opening: $uri")
     val factory = new BridjOGRDataStoreFactory()
