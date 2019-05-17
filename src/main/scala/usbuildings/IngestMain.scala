@@ -118,10 +118,28 @@ object IngestMain extends CommandApp(
         S3GeoTiffRDD.spatialMultiband(bucketInp, pathInp, options)
       }
 
-      val (zoom, reprojected: RDD[(SpatialKey, MultibandTile)] with Metadata[TileLayerMetadata[SpatialKey]]) = {
-        val (_, metadata) = TileLayerMetadata.fromRDD(inputRDD, FloatingLayoutScheme(512))
-        val inputTiledRDD = inputRDD.tileToLayout(metadata.cellType, metadata.layout, Bilinear)
+      // instead of using TileLayerMetadata.fromRDD gather metadata directly from files
+      // there is a risk here that we're not capturing the same files as S3GeoTiffRDD
+      // however we avoid reading in geotiff segments just to read their metadata
+      val rasterSummary = {
+        val paths: List[String] =
+          Util.getS3Client.listKeys(bucketInp, pathInp).map({ key => s"s3://$bucketInp/$key" }).toList
+        paths.foreach(p => println(s"Read Metadata: $p"))
+        val sourceRDD: RDD[RasterSource] =
+          sc.parallelize(paths, paths.length)
+            .map({ uri => GeoTiffRasterSource(uri): RasterSource })
+            .cache()
+        RasterSummary.fromRDD[RasterSource, Long](sourceRDD)
+      }
+      println(s"RasterSummary: $rasterSummary")
 
+      val (zoom, reprojected: RDD[(SpatialKey, MultibandTile)] with Metadata[TileLayerMetadata[SpatialKey]]) = {
+        // val (_, metadata) = TileLayerMetadata.fromRDD(inputRDD, FloatingLayoutScheme(512))
+        val metadata: TileLayerMetadata[SpatialKey] = {
+          val level = rasterSummary.levelFor(FloatingLayoutScheme(512))
+          rasterSummary.toTileLayerMetadata(level)._1 // discard zoom level
+        }
+        val inputTiledRDD = inputRDD.tileToLayout(metadata.cellType, metadata.layout, Bilinear)
         val (z, reprojected1) = MultibandTileLayerRDD(inputTiledRDD, metadata).reproject(WebMercator, layoutScheme, Bilinear)
         (z, reprojected1)
       }
