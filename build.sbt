@@ -46,8 +46,8 @@ libraryDependencies ++= Seq(
   geotrellisShapefile,
   geotrellisGeotools,
   geotrellisVectorTile,
-  "com.azavea.geotrellis" %% "geotrellis-contrib-vlm"  % "3.14.0-SNAPSHOT",
-  "com.azavea.geotrellis" %% "geotrellis-contrib-gdal"  % "3.14.0-SNAPSHOT",
+  "com.azavea.geotrellis" %% "geotrellis-contrib-vlm"  % "3.14.0",
+  "com.azavea.geotrellis" %% "geotrellis-contrib-gdal"  % "3.14.0",
   "org.geotools" % "gt-ogr-bridj" % Version.geotools
     exclude ("com.nativelibs4java", "bridj"),
   "com.nativelibs4java" % "bridj" % "0.6.1",
