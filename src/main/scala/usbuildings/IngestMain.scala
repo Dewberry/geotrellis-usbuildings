@@ -31,9 +31,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 import com.amazonaws.retry.PredefinedRetryPolicies
 import com.amazonaws.auth._
-import com.amazonaws.services.s3.model.DeleteObjectsRequest.KeyVersion
-import com.amazonaws.retry.PredefinedRetryPolicies
-import com.amazonaws.services.s3.model._
 import spray.json.DefaultJsonProtocol._
 import scala.util.{Properties, Try, Success, Failure}
 
@@ -53,7 +50,11 @@ object IngestMain extends CommandApp(
 
     val histogramOpt = Opts.flag("histogram", help = "Caluclate histogram on ingest").orFalse
 
-    ( inputOpt, outputOpt, layerNameOpt, histogramOpt).mapN { (inputUri, outputUri, layerName, histogram) =>
+    val partitionsOpt = Opts.option[Int]("partitions", help = "Number of partitions, default is to estimate").orNone
+
+    ( inputOpt, outputOpt, layerNameOpt, histogramOpt, partitionsOpt).mapN {
+      (inputUri, outputUri, layerName, histogram, numPartitions) =>
+
       println(s"Input: $inputUri")
       println(s"Catalog: $outputUri")
       println(s"Layer: $layerName")
@@ -98,40 +99,36 @@ object IngestMain extends CommandApp(
       // val LayoutLevel(zoom, layout) = summary.levelFor(layoutScheme)
       // println(s"Zoom: $zoom")
       // val reprojected: MultibandTileLayerRDD[SpatialKey] =
-      //   RasterSourceRDD.tiledLayerRDD(sourceRDD, layout,
+      // RasterSourceRDD.tiledLayerRDD(sourceRDD, layout,
       //     rasterSummary = summary.some,
       //     partitioner = Some(new HashPartitioner(summary.estimatePartitionsNumber * 2)))
-
-      val inputRDD: RDD[(ProjectedExtent, MultibandTile)] = {
-        val getS3Client: () => S3Client = { () =>
-          val config = {
-            val config = new com.amazonaws.ClientConfiguration
-            config.setMaxConnections(64)
-            config.setMaxErrorRetry(16)
-            config.setRetryPolicy(PredefinedRetryPolicies.getDefaultRetryPolicyWithCustomMaxRetries(32))
-            // Use AWS SDK default time-out settings before changing
-            config
-          }
-          AmazonS3Client(DefaultAWSCredentialsProviderChain.getInstance(), config)
-        }
-        val options = S3GeoTiffRDD.Options.DEFAULT.copy(getS3Client = getS3Client)
-        S3GeoTiffRDD.spatialMultiband(bucketInp, pathInp, options)
-      }
 
       // instead of using TileLayerMetadata.fromRDD gather metadata directly from files
       // there is a risk here that we're not capturing the same files as S3GeoTiffRDD
       // however we avoid reading in geotiff segments just to read their metadata
+
       val rasterSummary = {
-        val paths: List[String] =
-          Util.getS3Client.listKeys(bucketInp, pathInp).map({ key => s"s3://$bucketInp/$key" }).toList
+        val paths: List[String] = Util.getS3Client().listKeys(bucketInp, pathInp)
+          .map({ key => s"s3://$bucketInp/$key" }).toList
         paths.foreach(p => println(s"Read Metadata: $p"))
+
         val sourceRDD: RDD[RasterSource] =
           sc.parallelize(paths, paths.length)
             .map({ uri => GeoTiffRasterSource(uri): RasterSource })
             .cache()
+
         RasterSummary.fromRDD[RasterSource, Long](sourceRDD)
       }
+
       println(s"RasterSummary: $rasterSummary")
+      println(s"Estimate partitions: ${rasterSummary.estimatePartitionsNumber}")
+
+      val inputRDD: RDD[(ProjectedExtent, MultibandTile)] = {
+        val options = S3GeoTiffRDD.Options.DEFAULT.copy(
+          getS3Client = Util.getS3Client,
+          numPartitions = numPartitions.orElse(Some(rasterSummary.estimatePartitionsNumber)))
+        S3GeoTiffRDD.spatialMultiband(bucketInp, pathInp, options)
+      }
 
       val (zoom, reprojected: RDD[(SpatialKey, MultibandTile)] with Metadata[TileLayerMetadata[SpatialKey]]) = {
         // val (_, metadata) = TileLayerMetadata.fromRDD(inputRDD, FloatingLayoutScheme(512))
