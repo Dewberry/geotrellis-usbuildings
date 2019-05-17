@@ -29,8 +29,6 @@ import org.apache.spark.rdd._
 import org.apache.spark.serializer.KryoSerializer
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
-import com.amazonaws.retry.PredefinedRetryPolicies
-import com.amazonaws.auth._
 import spray.json.DefaultJsonProtocol._
 import scala.util.{Properties, Try, Success, Failure}
 
@@ -159,7 +157,7 @@ object IngestMain extends CommandApp(
       def writeOrUpdate(id: LayerId, rdd: MultibandTileLayerRDD[SpatialKey]): Unit = {
         if (attributeStore.layerExists(id)) {
           println(s"Updating: $id")
-          writer.update(id, rdd)
+          writer.update(id, rdd, { (existing: MultibandTile, updating: MultibandTile) => existing.merge(updating) })
         } else {
           val maxBounds = KeyBounds(
               minKey = SpatialKey(0, 0),
