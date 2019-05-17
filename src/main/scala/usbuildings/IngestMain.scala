@@ -123,10 +123,13 @@ object IngestMain extends CommandApp(
       println(s"RasterSummary: $rasterSummary")
       println(s"Estimate partitions: ${rasterSummary.estimatePartitionsNumber}")
 
+      val jobNumPartitions = numPartitions.getOrElse(rasterSummary.estimatePartitionsNumber)
+      val jobPartitioner = new HashPartitioner(jobNumPartitions)
+
       val inputRDD: RDD[(ProjectedExtent, MultibandTile)] = {
         val options = S3GeoTiffRDD.Options.DEFAULT.copy(
           getS3Client = Util.getS3Client,
-          numPartitions = numPartitions.orElse(Some(rasterSummary.estimatePartitionsNumber)))
+          numPartitions = Some(jobNumPartitions))
         S3GeoTiffRDD.spatialMultiband(bucketInp, pathInp, options)
       }
 
@@ -136,8 +139,10 @@ object IngestMain extends CommandApp(
           val level = rasterSummary.levelFor(FloatingLayoutScheme(512))
           rasterSummary.toTileLayerMetadata(level)._1 // discard zoom level
         }
-        val inputTiledRDD = inputRDD.tileToLayout(metadata.cellType, metadata.layout, Bilinear)
-        val (z, reprojected1) = MultibandTileLayerRDD(inputTiledRDD, metadata).reproject(WebMercator, layoutScheme, Bilinear)
+        val inputTiledRDD = inputRDD.tileToLayout(metadata.cellType, metadata.layout,
+          options = Tiler.Options(resampleMethod = Bilinear, partitioner = Some(jobPartitioner)))
+
+        val (z, reprojected1) = MultibandTileLayerRDD(inputTiledRDD, metadata).reproject(WebMercator, layoutScheme, Bilinear, Some(jobPartitioner))
         (z, reprojected1)
       }
 
