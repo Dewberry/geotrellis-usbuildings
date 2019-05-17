@@ -48,10 +48,12 @@ object IngestMain extends CommandApp(
 
     val histogramOpt = Opts.flag("histogram", help = "Caluclate histogram on ingest").orFalse
 
+    val pyramidOpt = Opts.flag("pyramid", help = "Pyramid up from after initial ingest").orFalse
+
     val partitionsOpt = Opts.option[Int]("partitions", help = "Number of partitions, default is to estimate").orNone
 
-    ( inputOpt, outputOpt, layerNameOpt, histogramOpt, partitionsOpt).mapN {
-      (inputUri, outputUri, layerName, histogram, numPartitions) =>
+    ( inputOpt, outputOpt, layerNameOpt, histogramOpt, pyramidOpt, partitionsOpt).mapN {
+      (inputUri, outputUri, layerName, histogram, pyramid, numPartitions) =>
 
       println(s"Input: $inputUri")
       println(s"Catalog: $outputUri")
@@ -198,10 +200,14 @@ object IngestMain extends CommandApp(
       }
 
       // Pyramiding up the zoom levels, write our tiles out to the local file system.
-      Pyramid.upLevels(reprojected, layoutScheme, zoom, Bilinear) { (rdd, z) =>
-        val layerId = LayerId(layerName, z)
-
-        writeOrUpdate(layerId, rdd)
+      if (pyramid) {
+        Pyramid.upLevels(reprojected, layoutScheme, zoom, Bilinear) { (rdd, z) =>
+          val layerId = LayerId(layerName, z)
+          writeOrUpdate(layerId, rdd)
+        }
+      } else {
+        val layerId = LayerId(layerName, zoom)
+        writeOrUpdate(layerId, reprojected)
       }
     }
   }
