@@ -8,6 +8,7 @@ import geotrellis.proj4.{LatLng, WebMercator}
 import geotrellis.raster.summary.polygonal.{DoubleHistogramSummary, MaxSummary}
 import geotrellis.raster.histogram.StreamingHistogram
 import geotrellis.vector._
+import geotrellis.vector.io.wkt.WKT
 import geotrellis.raster._
 import geotrellis.spark.SpatialKey
 import geotrellis.spark.io._
@@ -16,6 +17,7 @@ import geotrellis.vectortile.VectorTile
 import org.apache.spark.rdd.RDD
 import org.apache.spark.{HashPartitioner, SparkContext}
 import org.apache.spark.rdd.CoGroupedRDD
+import org.locationtech.jts.geom.TopologyException
 
 import scala.util.{Try, Success, Failure}
 
@@ -48,15 +50,20 @@ class BuildingSummaryApp(
   val summaries: Map[String, RDD[(Id, StreamingHistogram)]] = {
     val summaryFn: (Try[Raster[MultibandTile]], Polygon) => Option[StreamingHistogram] =
       { (rasterTry, geom) =>
-        rasterTry match {
-          case Success(raster) =>
-            // Note: we're only using band 0 of the layer here
-            val ret = raster.tile.band(0).polygonalSummary(raster.extent, geom, CustomDoubleHistogramSummary)
-            ret.minMaxValues.map( _ => ret) // if we only got NODATA, drop the result early
-
+        rasterTry.map { raster =>
+          // mapping over Try will capture possible Geometry intersection errors and fold them into Failure
+          // -- instead of throwing and interrupting the full job
+          // Note: we're only using band 0 of the layer here
+          val ret = raster.tile.band(0).polygonalSummary(raster.extent, geom, CustomDoubleHistogramSummary)
+          ret.minMaxValues.map( _ => ret) // if we only got NODATA, drop the result early
+        } match {
+          case Success(ret) =>
+            ret
+          case Failure(e: TopologyException) =>
+            logger.error(s"${e.getMessage} : ${WKT.write(geom)}")
+            None
           case Failure(e: ValueNotFoundError) =>
             None // tile wasn't there, sad but sometimes expected
-
           case Failure(e: Throwable) =>
             logger.error(e.getMessage)
             None
