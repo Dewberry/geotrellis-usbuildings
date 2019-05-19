@@ -78,8 +78,9 @@ object UpdateHistogramMain extends CommandApp(
       val attributeStore = AttributeStore(catalogUri)
 
       val reader = LayerReader(attributeStore, catalogUri)
+      val jobNumPartitions = numPartitions.getOrElse(sc.defaultParallelism)
 
-      val layer = reader.read[SpatialKey, MultibandTile, TileLayerMetadata[SpatialKey]](layerId, numPartitions.getOrElse(sc.defaultParallelism))
+      val layer = reader.read[SpatialKey, MultibandTile, TileLayerMetadata[SpatialKey]](layerId, jobNumPartitions)
       val updateHistograms: Array[Histogram[Double]] = layer.histogram
       val topLayerId = LayerId(layerName, 0)
 

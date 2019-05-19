@@ -88,23 +88,24 @@ object PyramidRepairMain extends CommandApp(
       val layerId = LayerId(layerName, zoom)
       val reader = LayerReader(attributeStore, catalogUri)
       val writer = LayerWriter(attributeStore, catalogUri)
-
+      val jobNumPartitions = numPartitions.getOrElse(sc.defaultParallelism)
 
       val baseLayer = extent match {
         case Some(ex) =>
           val bbox = Extent.fromString(ex).toPolygon
-          reader.query[SpatialKey, MultibandTile, TileLayerMetadata[SpatialKey]](layerId)
+          reader.query[SpatialKey, MultibandTile, TileLayerMetadata[SpatialKey]](layerId, jobNumPartitions)
             .where(Intersects(bbox -> (LatLng: CRS)))
             .result
 
         case None =>
-          reader.read[SpatialKey, MultibandTile, TileLayerMetadata[SpatialKey]](layerId)
+          reader.read[SpatialKey, MultibandTile, TileLayerMetadata[SpatialKey]](layerId, jobNumPartitions)
       }
 
       require(baseLayer.metadata.crs == WebMercator, s"Layout scheme hard-corded to WebMercator, can't pyramid: ${baseLayer.metadata.crs}")
       val layoutScheme = ZoomedLayoutScheme(WebMercator, tileSize = 256)
 
-      Pyramid.upLevels(baseLayer, layoutScheme, zoom, Bilinear) { (rdd, z) =>
+      val options = Pyramid.Options(Bilinear, new HashPartitioner(jobNumPartitions))
+      Pyramid.upLevels(baseLayer, layoutScheme, zoom, options) { (rdd, z) =>
           if (z < zoom) { // skip the baseLayer, don't rewrite it
             Util.writeOrUpdateLayer(writer, LayerId(layerName, z), rdd)
           }
