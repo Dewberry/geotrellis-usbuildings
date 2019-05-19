@@ -88,7 +88,7 @@ object BuildingSummaryMain extends CommandApp(
       implicit val sc: SparkContext = ss.sparkContext
 
       val uris: List[String] = buildingsUri.map(_.toList).getOrElse(Building.geoJsonURLs)
-      val buildings = new BuildingSummaryApp(uris, layersMap, sample)
+      val buildings = new BuildingSummaryApp(uris, layersMap, zoom = 15, sample)
 
       GenerateVT.save(buildings.tiles, zoom= 15, bucket, path)
     }

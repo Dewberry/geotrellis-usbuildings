@@ -46,8 +46,8 @@ libraryDependencies ++= Seq(
   geotrellisShapefile,
   geotrellisGeotools,
   geotrellisVectorTile,
-  "com.azavea.geotrellis" %% "geotrellis-contrib-vlm"  % "3.14.0",
-  "com.azavea.geotrellis" %% "geotrellis-contrib-gdal"  % "3.14.0",
+  "com.azavea.geotrellis" %% "geotrellis-contrib-vlm"  % "2.11.0",
+  "com.azavea.geotrellis" %% "geotrellis-contrib-gdal"  % "2.11.0",
   "org.geotools" % "gt-ogr-bridj" % Version.geotools
     exclude ("com.nativelibs4java", "bridj"),
   "com.nativelibs4java" % "bridj" % "0.6.1",
@@ -115,9 +115,9 @@ sparkEmrBootstrap := List(BootstrapAction("Install GDAL + dependencies",
   "v1.0"))
 //Add job titile
 sparkS3JarFolder := "s3://dewberry-demo/bats/geotrellis/usbuildings/jars"
-sparkInstanceCount := 21
-sparkMasterType := "m5.2xlarge"
-sparkCoreType := "m5.2xlarge"
+sparkInstanceCount := 100
+sparkMasterType := "i3.4xlarge"
+sparkCoreType := "i3.4xlarge"
 sparkMasterPrice := Some(0.5)
 sparkCorePrice := Some(0.5)
 sparkCoreEbsSize := Some(800)

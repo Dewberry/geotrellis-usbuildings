@@ -21,6 +21,7 @@ import geotrellis.spark._
 import geotrellis.spark.io._
 import geotrellis.spark.io.s3._
 import geotrellis.spark.io.index._
+import geotrellis.spark.reproject._
 import geotrellis.spark.pyramid.Pyramid
 import geotrellis.spark.tiling.{FloatingLayoutScheme, ZoomedLayoutScheme}
 import geotrellis.spark.{LayerId, MultibandTileLayerRDD, SpatialKey, TileLayerMetadata}
@@ -29,8 +30,6 @@ import org.apache.spark.rdd._
 import org.apache.spark.serializer.KryoSerializer
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
-import com.amazonaws.retry.PredefinedRetryPolicies
-import com.amazonaws.auth._
 import spray.json.DefaultJsonProtocol._
 import scala.util.{Properties, Try, Success, Failure}
 
@@ -50,10 +49,12 @@ object IngestMain extends CommandApp(
 
     val histogramOpt = Opts.flag("histogram", help = "Caluclate histogram on ingest").orFalse
 
+    val pyramidOpt = Opts.flag("pyramid", help = "Pyramid up from after initial ingest").orFalse
+
     val partitionsOpt = Opts.option[Int]("partitions", help = "Number of partitions, default is to estimate").orNone
 
-    ( inputOpt, outputOpt, layerNameOpt, histogramOpt, partitionsOpt).mapN {
-      (inputUri, outputUri, layerName, histogram, numPartitions) =>
+    ( inputOpt, outputOpt, layerNameOpt, histogramOpt, pyramidOpt, partitionsOpt).mapN {
+      (inputUri, outputUri, layerName, histogram, pyramid, numPartitions) =>
 
       println(s"Input: $inputUri")
       println(s"Catalog: $outputUri")
@@ -64,7 +65,7 @@ object IngestMain extends CommandApp(
 
       val conf = new SparkConf().
         setIfMissing("spark.master", "local[*]").
-        setAppName("Building Footprint Elevation").
+        setAppName("Ingest").
         set("spark.serializer", classOf[KryoSerializer].getName).
         set("spark.kryo.registrator", classOf[KryoRegistrator].getName).
         set("spark.executionEnv.AWS_PROFILE", Properties.envOrElse("AWS_PROFILE", "default"))
@@ -107,6 +108,7 @@ object IngestMain extends CommandApp(
       // there is a risk here that we're not capturing the same files as S3GeoTiffRDD
       // however we avoid reading in geotiff segments just to read their metadata
 
+      // map/reduce over raster metadata to get pixel count, cell size and projections that describe the full input
       val rasterSummary = {
         val paths: List[String] = Util.getS3Client().listKeys(bucketInp, pathInp)
           .map({ key => s"s3://$bucketInp/$key" }).toList
@@ -117,7 +119,7 @@ object IngestMain extends CommandApp(
             .map({ uri => GeoTiffRasterSource(uri): RasterSource })
             .cache()
 
-        RasterSummary.fromRDD[RasterSource, Long](sourceRDD)
+        RasterSummary.fromRDD[RasterSource](sourceRDD)
       }
 
       println(s"RasterSummary: $rasterSummary")
@@ -136,13 +138,20 @@ object IngestMain extends CommandApp(
       val (zoom, reprojected: RDD[(SpatialKey, MultibandTile)] with Metadata[TileLayerMetadata[SpatialKey]]) = {
         // val (_, metadata) = TileLayerMetadata.fromRDD(inputRDD, FloatingLayoutScheme(512))
         val metadata: TileLayerMetadata[SpatialKey] = {
+          // get layout level and metadata for RDD that would impose 512x512 grid over input in native resolution
+          // SpatialKey(0, 0) of the covers the North-West-most raster
+          // we need the rasters on defined grid so we can plan distributed reprojection
           val level = rasterSummary.levelFor(FloatingLayoutScheme(512))
           rasterSummary.toTileLayerMetadata(level)._1 // discard zoom level
         }
+
+        // tile the inputs to 512x512 grid defined above, resampleMethod is a formality here, nothing should be resampled
         val inputTiledRDD = inputRDD.tileToLayout(metadata.cellType, metadata.layout,
           options = Tiler.Options(resampleMethod = Bilinear, partitioner = Some(jobPartitioner)))
 
+        // reproject to WebMercator pyramid. Reproejct operation is going to use layoutScheme to pick target zoom level and report it back
         val (z, reprojected1) = MultibandTileLayerRDD(inputTiledRDD, metadata).reproject(WebMercator, layoutScheme, Bilinear, Some(jobPartitioner))
+
         (z, reprojected1)
       }
 
@@ -151,24 +160,6 @@ object IngestMain extends CommandApp(
 
       // Create the writer that we will use to store the tiles in the local catalog.
       val writer = LayerWriter(attributeStore, outputUri)
-
-      /** Write or udpate a layer, creates layer with bounds potentially larger than rdd
-       * @param id LayerId to be create
-       * @param rdd Tiles for initial or udpate write
-       */
-      def writeOrUpdate(id: LayerId, rdd: MultibandTileLayerRDD[SpatialKey]): Unit = {
-        if (attributeStore.layerExists(id)) {
-          println(s"Updating: $id")
-          writer.update(id, rdd)
-        } else {
-          val maxBounds = KeyBounds(
-              minKey = SpatialKey(0, 0),
-              maxKey = SpatialKey(rdd.metadata.layout.layoutCols - 1, rdd.metadata.layout.layoutRows - 1))
-          val keyIndex: KeyIndex[SpatialKey] = ZCurveKeyIndexMethod.createIndex(maxBounds)
-          println(s"Writing: $id")
-          writer.write(id, rdd, keyIndex)
-        }
-      }
 
       // write base layer to disk to branch for two jobs, calculate histogram and write
       reprojected.persist(StorageLevel.MEMORY_AND_DISK_SER)
@@ -200,10 +191,14 @@ object IngestMain extends CommandApp(
       }
 
       // Pyramiding up the zoom levels, write our tiles out to the local file system.
-      Pyramid.upLevels(reprojected, layoutScheme, zoom, Bilinear) { (rdd, z) =>
-        val layerId = LayerId(layerName, z)
-
-        writeOrUpdate(layerId, rdd)
+      if (pyramid) {
+        Pyramid.upLevels(reprojected, layoutScheme, zoom, Bilinear) { (rdd, z) =>
+          val layerId = LayerId(layerName, z)
+          Util.writeOrUpdateLayer(writer, layerId, rdd)
+        }
+      } else {
+        val layerId = LayerId(layerName, zoom)
+        Util.writeOrUpdateLayer(writer, layerId, reprojected)
       }
     }
   }
