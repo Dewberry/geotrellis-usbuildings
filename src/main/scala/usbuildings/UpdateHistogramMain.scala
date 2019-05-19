@@ -52,8 +52,8 @@ object UpdateHistogramMain extends CommandApp(
 
     val partitionsOpt = Opts.option[Int]("partitions", help = "Number of partitions, default is to estimate").orNone
 
-    ( catalogOpt, catalogOpt, layerNameOpt, zoomOpt, replaceOpt, partitionsOpt).mapN {
-      (inputUri, catalogUri, layerName, zoom, replace, numPartitions) =>
+    (catalogOpt, layerNameOpt, zoomOpt, replaceOpt, partitionsOpt).mapN {
+      (catalogUri, layerName, zoom, replace, numPartitions) =>
 
       val layerId = LayerId(layerName, zoom)
       println(s"Catalog: $catalogUri")
