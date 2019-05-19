@@ -52,8 +52,8 @@ object UpdateHistogramMain extends CommandApp(
 
     val partitionsOpt = Opts.option[Int]("partitions", help = "Number of partitions, default is to estimate").orNone
 
-    ( catalogOpt, catalogOpt, layerNameOpt, zoomOpt, replaceOpt, partitionsOpt).mapN {
-      (inputUri, catalogUri, layerName, zoom, replace, numPartitions) =>
+    (catalogOpt, layerNameOpt, zoomOpt, replaceOpt, partitionsOpt).mapN {
+      (catalogUri, layerName, zoom, replace, numPartitions) =>
 
       val layerId = LayerId(layerName, zoom)
       println(s"Catalog: $catalogUri")
@@ -97,14 +97,14 @@ object UpdateHistogramMain extends CommandApp(
               case (None, Some(uh)) => uh
               case (None, None) => sys.error("No saved or generated histogram")
             }
-            val oldMinMax = savedHistograms.map(_.minMaxValues())
-            val updMinMax = updateHistograms.map(_.minMaxValues())
-            val mrgMinMax = mergedHistograms.map(_.minMaxValues())
+            val oldMinMax = savedHistograms.map(_.minMaxValues()).toList
+            val updMinMax = updateHistograms.map(_.minMaxValues()).toList
+            val mrgMinMax = mergedHistograms.map(_.minMaxValues()).toList
             println(s"Updating histogram for $topLayerId, old: $oldMinMax upd: $updMinMax mrg: $mrgMinMax")
             attributeStore.write(topLayerId, "histogram", mergedHistograms)
 
           case Failure(e: AttributeNotFoundError) =>
-            println(s"Saving histogram for $topLayerId, new: ${updateHistograms.map(_.minMaxValues())}")
+            println(s"Saving histogram for $topLayerId, new: ${updateHistograms.map(_.minMaxValues()).toList}")
             attributeStore.write(topLayerId, "histogram", updateHistograms)
 
           case Failure(e) =>
