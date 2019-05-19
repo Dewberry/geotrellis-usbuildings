@@ -21,6 +21,7 @@ import geotrellis.spark._
 import geotrellis.spark.io._
 import geotrellis.spark.io.s3._
 import geotrellis.spark.io.index._
+import geotrellis.spark.reproject._
 import geotrellis.spark.pyramid.Pyramid
 import geotrellis.spark.tiling.{FloatingLayoutScheme, ZoomedLayoutScheme}
 import geotrellis.spark.{LayerId, MultibandTileLayerRDD, SpatialKey, TileLayerMetadata}
@@ -64,7 +65,7 @@ object IngestMain extends CommandApp(
 
       val conf = new SparkConf().
         setIfMissing("spark.master", "local[*]").
-        setAppName("Building Footprint Elevation").
+        setAppName("Ingest").
         set("spark.serializer", classOf[KryoSerializer].getName).
         set("spark.kryo.registrator", classOf[KryoRegistrator].getName).
         set("spark.executionEnv.AWS_PROFILE", Properties.envOrElse("AWS_PROFILE", "default"))
@@ -107,6 +108,7 @@ object IngestMain extends CommandApp(
       // there is a risk here that we're not capturing the same files as S3GeoTiffRDD
       // however we avoid reading in geotiff segments just to read their metadata
 
+      // map/reduce over raster metadata to get pixel count, cell size and projections that describe the full input
       val rasterSummary = {
         val paths: List[String] = Util.getS3Client().listKeys(bucketInp, pathInp)
           .map({ key => s"s3://$bucketInp/$key" }).toList
@@ -117,7 +119,7 @@ object IngestMain extends CommandApp(
             .map({ uri => GeoTiffRasterSource(uri): RasterSource })
             .cache()
 
-        RasterSummary.fromRDD[RasterSource, Long](sourceRDD)
+        RasterSummary.fromRDD[RasterSource](sourceRDD)
       }
 
       println(s"RasterSummary: $rasterSummary")
@@ -136,13 +138,20 @@ object IngestMain extends CommandApp(
       val (zoom, reprojected: RDD[(SpatialKey, MultibandTile)] with Metadata[TileLayerMetadata[SpatialKey]]) = {
         // val (_, metadata) = TileLayerMetadata.fromRDD(inputRDD, FloatingLayoutScheme(512))
         val metadata: TileLayerMetadata[SpatialKey] = {
+          // get layout level and metadata for RDD that would impose 512x512 grid over input in native resolution
+          // SpatialKey(0, 0) of the covers the North-West-most raster
+          // we need the rasters on defined grid so we can plan distributed reprojection
           val level = rasterSummary.levelFor(FloatingLayoutScheme(512))
           rasterSummary.toTileLayerMetadata(level)._1 // discard zoom level
         }
+
+        // tile the inputs to 512x512 grid defined above, resampleMethod is a formality here, nothing should be resampled
         val inputTiledRDD = inputRDD.tileToLayout(metadata.cellType, metadata.layout,
           options = Tiler.Options(resampleMethod = Bilinear, partitioner = Some(jobPartitioner)))
 
+        // reproject to WebMercator pyramid. Reproejct operation is going to use layoutScheme to pick target zoom level and report it back
         val (z, reprojected1) = MultibandTileLayerRDD(inputTiledRDD, metadata).reproject(WebMercator, layoutScheme, Bilinear, Some(jobPartitioner))
+
         (z, reprojected1)
       }
 
