@@ -46,11 +46,12 @@ class BuildingSummaryApp(
   val partitioner = new HashPartitioner(partitions=allBuildings.getNumPartitions * 4) //ravi commenting off partitions to let spark determine optimal
 
   val summaries: Map[String, RDD[(Id, StreamingHistogram)]] = {
-    val summaryFn: (Try[Raster[Tile]], Polygon) => Option[StreamingHistogram] =
+    val summaryFn: (Try[Raster[MultibandTile]], Polygon) => Option[StreamingHistogram] =
       { (rasterTry, geom) =>
         rasterTry match {
           case Success(raster) =>
-            val ret = raster.tile.polygonalSummary(raster.extent, geom, CustomDoubleHistogramSummary)
+            // Note: we're only using band 0 of the layer here
+            val ret = raster.tile.band(0).polygonalSummary(raster.extent, geom, CustomDoubleHistogramSummary)
             ret.minMaxValues.map( _ => ret) // if we only got NODATA, drop the result early
 
           case Failure(e: ValueNotFoundError) =>

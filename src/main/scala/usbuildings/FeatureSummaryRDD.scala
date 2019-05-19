@@ -35,6 +35,7 @@ object FeatureSummaryRDD extends LazyLogging {
    * If `summaryFn` returns `None` the corresponding feature, attribute will be dropped from result RDD.
    * Features that do not intersect layer tiles will be dropped from result RDD.
    *
+   *
    * @tparam I Type of the feature identiy, used to group results
    * @tparam R Type of per-feature summary result
    * @param features RDD of features to be intersected with GeoTrellis layer
@@ -47,7 +48,7 @@ object FeatureSummaryRDD extends LazyLogging {
     features: RDD[Feature[Polygon, I]],
     featureCrs: CRS,
     layer: Layer,
-    summaryFn: (Try[Raster[Tile]], Polygon) => Option[R],
+    summaryFn: (Try[Raster[MultibandTile]], Polygon) => Option[R],
     partitioner: Partitioner
   ): RDD[(I, R)] = {
     // Get layer matadata so we can know how it is gridded
@@ -82,12 +83,12 @@ object FeatureSummaryRDD extends LazyLogging {
 
     val summariesByKey: RDD[(I, R)] =
       grouped.mapPartitions ({ it =>
-        val reader: Reader[SpatialKey, Tile] = ValueReader(layer.catalog).reader[SpatialKey, Tile](layer.layerId)
+        val reader: Reader[SpatialKey, MultibandTile] = ValueReader(layer.catalog).reader[SpatialKey, MultibandTile](layer.layerId)
 
         it.flatMap { case (key, features) =>
           // read tile once and use it for all tiles, will throw if tile is missing
-          val raster: Try[Raster[Tile]] =
-            Try(reader(key)).map { tile: Tile =>
+          val raster: Try[Raster[MultibandTile]] =
+            Try(reader(key)).map { tile: MultibandTile =>
               val extent = key.extent(tlm.layout)
               Raster(tile, extent)
             }
